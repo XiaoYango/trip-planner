@@ -21,10 +21,12 @@ class TripGraphState(TypedDict):
     attempts: int
     validation_errors: list[str]
     feedback: str
+    generation_mode: NotRequired[Literal["standard", "daily"]]
 
     attractions_raw: NotRequired[str]
     weather_raw: NotRequired[str]
     hotels_raw: NotRequired[str]
+    daily_plans: NotRequired[list[dict[str, Any]]]
 
     draft: NotRequired[dict[str, Any]]
     final_plan: NotRequired[dict[str, Any]]

@@ -6,9 +6,10 @@ from typing import List
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
-# 加载环境变量
-# 首先尝试加载当前目录的.env
-load_dotenv()
+# 始终从backend目录加载本地配置，避免IDE工作目录不同导致配置失效
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+ENV_FILE = BACKEND_DIR / ".env"
+load_dotenv(ENV_FILE)
 
 # 然后尝试加载HelloAgents的.env(如果存在)
 helloagents_env = Path(__file__).parent.parent.parent.parent / "HelloAgents" / ".env"
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     """应用配置"""
 
     # 应用基本配置
-    app_name: str = "HelloAgents智能旅行助手"
+    app_name: str = "智能旅行助手"
     app_version: str = "1.0.0"
     debug: bool = False
 
@@ -38,16 +39,18 @@ class Settings(BaseSettings):
     unsplash_access_key: str = ""
     unsplash_secret_key: str = ""
 
-    # LLM配置 (从环境变量读取,由HelloAgents管理)
-    openai_api_key: str = ""
-    openai_base_url: str = "https://api.openai.com/v1"
-    openai_model: str = "gpt-4"
+    # LLM统一配置
+    llm_api_key: str = ""
+    llm_base_url: str = ""
+    llm_model_id: str = ""
+    llm_provider: str = ""
+    llm_timeout: int = 60
 
     # 日志配置
     log_level: str = "INFO"
 
     class Config:
-        env_file = ".env"
+        env_file = str(ENV_FILE)
         case_sensitive = False
         extra = "ignore"  # 忽略额外的环境变量
 
@@ -74,10 +77,12 @@ def validate_config():
     if not settings.amap_api_key:
         errors.append("AMAP_API_KEY未配置")
 
-    # HelloAgentsLLM会自动从LLM_API_KEY读取,不强制要求OPENAI_API_KEY
-    llm_api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not llm_api_key:
-        warnings.append("LLM_API_KEY或OPENAI_API_KEY未配置,LLM功能可能无法使用")
+    if not settings.llm_api_key:
+        warnings.append("LLM_API_KEY未配置,LLM功能可能无法使用")
+    if not settings.llm_base_url:
+        warnings.append("LLM_BASE_URL未配置,LLM功能可能无法使用")
+    if not settings.llm_model_id:
+        warnings.append("LLM_MODEL_ID未配置,LLM功能可能无法使用")
 
     if errors:
         error_msg = "配置错误:\n" + "\n".join(f"  - {e}" for e in errors)
@@ -99,13 +104,8 @@ def print_config():
     print(f"服务器: {settings.host}:{settings.port}")
     print(f"高德地图API Key: {'已配置' if settings.amap_api_key else '未配置'}")
 
-    # 检查LLM配置
-    llm_api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-    llm_base_url = os.getenv("LLM_BASE_URL") or settings.openai_base_url
-    llm_model = os.getenv("LLM_MODEL_ID") or settings.openai_model
-
-    print(f"LLM API Key: {'已配置' if llm_api_key else '未配置'}")
-    print(f"LLM Base URL: {llm_base_url}")
-    print(f"LLM Model: {llm_model}")
+    print(f"LLM API Key: {'已配置' if settings.llm_api_key else '未配置'}")
+    print(f"LLM Base URL: {settings.llm_base_url or '未配置'}")
+    print(f"LLM Model: {settings.llm_model_id or '未配置'}")
+    print(f"LLM Provider: {settings.llm_provider or '自动识别'}")
     print(f"日志级别: {settings.log_level}")
-

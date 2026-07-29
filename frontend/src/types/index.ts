@@ -107,6 +107,33 @@ export interface TripPlanResponse {
   status?: WorkflowStatus
   thread_id?: string
   review?: TripReviewInfo
+  errors?: string[]
+  attempts?: number
+}
+
+export type TripStreamEventName =
+  | 'status'
+  | 'day'
+  | 'warning'
+  | 'review'
+  | 'complete'
+  | 'error'
+
+export interface TripStreamEvent {
+  event: TripStreamEventName
+  node?: string
+  message?: string
+  progress?: number
+  day?: number
+  total_days?: number
+  plan?: DayPlan
+  thread_id?: string
+  success?: boolean
+  status?: WorkflowStatus
+  data?: TripPlan
+  review?: TripReviewInfo
+  errors?: string[]
+  attempts?: number
 }
 
 export interface TripReviewRequest {

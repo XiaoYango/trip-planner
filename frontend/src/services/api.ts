@@ -1,13 +1,19 @@
 
 import axios from 'axios'
-import type { TripFormData, TripPlanResponse, TripReviewRequest } from '@/types'
+import type {
+  TripFormData,
+  TripPlanResponse,
+  TripReviewRequest,
+  TripStreamEvent,
+  TripStreamEventName
+} from '@/types'
 
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 120000, // 2分钟超时
+  timeout: 300000, // 多Agent长任务最多等待5分钟
   headers: {
     'Content-Type': 'application/json'
   }
@@ -48,6 +54,87 @@ export async function generateTripPlan(formData: TripFormData): Promise<TripPlan
     console.error('生成旅行计划失败:', error)
     throw new Error(error.response?.data?.detail || error.message || '生成旅行计划失败')
   }
+}
+
+/**
+ * 通过POST SSE按天接收旅行计划。
+ */
+export async function generateTripPlanStream(
+  formData: TripFormData,
+  onEvent: (event: TripStreamEvent) => void
+): Promise<TripPlanResponse> {
+  const response = await fetch(
+    `${API_BASE_URL.replace(/\/$/, '')}/api/trip/plan/stream`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream'
+      },
+      body: JSON.stringify(formData)
+    }
+  )
+
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(detail || `流式请求失败：HTTP ${response.status}`)
+  }
+  if (!response.body) {
+    throw new Error('浏览器未提供流式响应读取能力')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let finalResponse: TripPlanResponse | null = null
+
+  const consumeBlock = (block: string) => {
+    let eventName: TripStreamEventName = 'status'
+    const dataLines: string[] = []
+
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim() as TripStreamEventName
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).trim())
+      }
+    }
+    if (!dataLines.length) return
+
+    const payload = JSON.parse(dataLines.join('\n'))
+    const streamEvent: TripStreamEvent = {
+      event: eventName,
+      ...payload
+    }
+    onEvent(streamEvent)
+
+    if (eventName === 'review' || eventName === 'complete' || eventName === 'error') {
+      finalResponse = payload as TripPlanResponse
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary !== -1) {
+      const block = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      consumeBlock(block)
+      boundary = buffer.indexOf('\n\n')
+    }
+  }
+
+  buffer += decoder.decode()
+  if (buffer.trim()) {
+    consumeBlock(buffer.trim())
+  }
+  if (!finalResponse) {
+    throw new Error('流式连接已结束，但没有收到最终旅行计划状态')
+  }
+  return finalResponse
 }
 
 /**

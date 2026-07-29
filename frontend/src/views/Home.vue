@@ -17,6 +17,34 @@
     </div>
 
     <a-card class="form-card" :bordered="false">
+      <a-alert
+        v-if="workflowErrorMessage"
+        class="workflow-error-panel"
+        type="error"
+        show-icon
+        closable
+        @close="clearWorkflowError"
+      >
+        <template #message>
+          <strong>{{ workflowErrorMessage }}</strong>
+        </template>
+        <template #description>
+          <ul v-if="workflowErrorDetails.length" class="workflow-error-list">
+            <li v-for="detail in workflowErrorDetails" :key="detail">
+              {{ detail }}
+            </li>
+          </ul>
+          <div class="workflow-error-meta">
+            <span v-if="workflowErrorAttempts">
+              Planner尝试次数：{{ workflowErrorAttempts }}
+            </span>
+            <span v-if="workflowErrorThreadId">
+              工作流ID：<code>{{ workflowErrorThreadId }}</code>
+            </span>
+          </div>
+        </template>
+      </a-alert>
+
       <a-form
         :model="formData"
         layout="vertical"
@@ -198,6 +226,46 @@
             </p>
           </div>
         </a-form-item>
+
+        <a-form-item v-if="streamedDays.length || streamWarnings.length">
+          <div class="stream-result-panel">
+            <div class="stream-result-header">
+              <strong>实时生成结果</strong>
+              <span>
+                已完成 {{ streamedDays.length }} / {{ streamTotalDays || formData.travel_days }} 天
+              </span>
+            </div>
+
+            <div
+              v-for="day in streamedDays"
+              :key="day.day_index"
+              class="stream-day-card"
+            >
+              <div class="stream-day-title">
+                第 {{ day.day_index + 1 }} 天 · {{ day.date }}
+              </div>
+              <p>{{ day.description }}</p>
+              <div class="stream-attractions">
+                <a-tag
+                  v-for="attraction in day.attractions"
+                  :key="`${day.day_index}-${attraction.name}`"
+                  color="blue"
+                >
+                  {{ attraction.name }}
+                </a-tag>
+              </div>
+            </div>
+
+            <a-alert
+              v-for="warning in streamWarnings"
+              :key="warning"
+              :message="warning"
+              type="warning"
+              show-icon
+              class="stream-warning"
+            />
+          </div>
+        </a-form-item>
       </a-form>
     </a-card>
   </div>
@@ -207,14 +275,50 @@
 import { ref, reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { generateTripPlan } from '@/services/api'
-import type { TripFormData } from '@/types'
+import { generateTripPlanStream } from '@/services/api'
+import type { DayPlan, TripFormData, TripStreamEvent } from '@/types'
 import type { Dayjs } from 'dayjs'
 
 const router = useRouter()
 const loading = ref(false)
 const loadingProgress = ref(0)
 const loadingStatus = ref('')
+const workflowErrorMessage = ref('')
+const workflowErrorDetails = ref<string[]>([])
+const workflowErrorThreadId = ref('')
+const workflowErrorAttempts = ref(0)
+const streamedDays = ref<DayPlan[]>([])
+const streamWarnings = ref<string[]>([])
+const streamTotalDays = ref(0)
+
+const clearWorkflowError = () => {
+  workflowErrorMessage.value = ''
+  workflowErrorDetails.value = []
+  workflowErrorThreadId.value = ''
+  workflowErrorAttempts.value = 0
+}
+
+const handleStreamEvent = (event: TripStreamEvent) => {
+  if (event.total_days) {
+    streamTotalDays.value = event.total_days
+  }
+  if (typeof event.progress === 'number') {
+    loadingProgress.value = Math.max(loadingProgress.value, event.progress)
+  }
+  if (event.message) {
+    loadingStatus.value = event.message
+  }
+  if (event.event === 'day' && event.plan) {
+    const nextDays = streamedDays.value.filter(
+      day => day.day_index !== event.plan!.day_index
+    )
+    nextDays.push(event.plan)
+    streamedDays.value = nextDays.sort((a, b) => a.day_index - b.day_index)
+  }
+  if (event.event === 'warning' && event.message) {
+    streamWarnings.value.push(event.message)
+  }
+}
 
 const formData = reactive<Omit<TripFormData, 'start_date' | 'end_date'> & { start_date: Dayjs | null; end_date: Dayjs | null }>({
   city: '',
@@ -249,27 +353,13 @@ const handleSubmit = async () => {
     return
   }
 
+  clearWorkflowError()
+  streamedDays.value = []
+  streamWarnings.value = []
+  streamTotalDays.value = formData.travel_days
   loading.value = true
   loadingProgress.value = 0
   loadingStatus.value = '正在初始化...'
-
-  // 模拟进度更新
-  const progressInterval = setInterval(() => {
-    if (loadingProgress.value < 90) {
-      loadingProgress.value += 10
-
-      // 更新状态文本
-      if (loadingProgress.value <= 30) {
-        loadingStatus.value = '🔍 正在搜索景点...'
-      } else if (loadingProgress.value <= 50) {
-        loadingStatus.value = '🌤️ 正在查询天气...'
-      } else if (loadingProgress.value <= 70) {
-        loadingStatus.value = '🏨 正在推荐酒店...'
-      } else {
-        loadingStatus.value = '📋 正在生成行程计划...'
-      }
-    }
-  }, 500)
 
   try {
     const requestData: TripFormData = {
@@ -283,9 +373,8 @@ const handleSubmit = async () => {
       free_text_input: formData.free_text_input
     }
 
-    const response = await generateTripPlan(requestData)
+    const response = await generateTripPlanStream(requestData, handleStreamEvent)
 
-    clearInterval(progressInterval)
     loadingProgress.value = 100
     loadingStatus.value = '✅ 完成!'
 
@@ -308,11 +397,18 @@ const handleSubmit = async () => {
         router.push('/result')
       }, 500)
     } else {
+      workflowErrorMessage.value = response.message || '旅行计划生成失败'
+      workflowErrorDetails.value = response.errors || []
+      workflowErrorThreadId.value = response.thread_id || ''
+      workflowErrorAttempts.value = response.attempts || 0
       message.error(response.message || '生成失败')
     }
   } catch (error: any) {
-    clearInterval(progressInterval)
-    message.error(error.message || '生成旅行计划失败,请稍后重试')
+    workflowErrorMessage.value = '请求旅行规划服务失败'
+    workflowErrorDetails.value = [
+      error.message || '生成旅行计划失败，请稍后重试'
+    ]
+    message.error(workflowErrorDetails.value[0])
   } finally {
     setTimeout(() => {
       loading.value = false
@@ -438,6 +534,64 @@ const handleSubmit = async () => {
   z-index: 1;
   backdrop-filter: blur(10px);
   background: rgba(255, 255, 255, 0.98) !important;
+}
+
+.workflow-error-panel {
+  margin-bottom: 24px;
+  text-align: left;
+}
+
+.workflow-error-list {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.workflow-error-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 8px;
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
+.stream-result-panel {
+  padding: 18px;
+  border: 1px solid #d9e7ff;
+  border-radius: 12px;
+  background: #f7faff;
+  text-align: left;
+}
+
+.stream-result-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  color: #1f3a5f;
+}
+
+.stream-day-card {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(31 58 95 / 8%);
+}
+
+.stream-day-title {
+  margin-bottom: 6px;
+  color: #1677ff;
+  font-weight: 600;
+}
+
+.stream-attractions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stream-warning {
+  margin-top: 12px;
 }
 
 /* 表单分区 */

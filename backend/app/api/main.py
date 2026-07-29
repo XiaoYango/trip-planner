@@ -1,9 +1,14 @@
 """FastAPI主应用"""
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from ..config import get_settings, validate_config, print_config
 from .routes import trip, poi, map as map_routes
+
+# 保留SDK自动重试，仅隐藏每次重试的INFO提示。
+logging.getLogger("openai._base_client").setLevel(logging.WARNING)
 
 # 获取配置
 settings = get_settings()
@@ -12,7 +17,7 @@ settings = get_settings()
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="基于HelloAgents框架的智能旅行规划助手API",
+    description="智能旅行规划助手API",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -96,4 +101,3 @@ if __name__ == "__main__":
         port=settings.port,
         reload=True
     )
-

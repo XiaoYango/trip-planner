@@ -1,11 +1,11 @@
 """多智能体旅行规划系统"""
 
 import json
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Any, List
+# from concurrent.futures import ThreadPoolExecutor
+# from typing import Dict, Any, List
 from hello_agents import SimpleAgent
 from hello_agents.tools import MCPTool
-from ..services.llm_service import get_llm
+from ..services.llm_service import create_llm
 from ..models.schemas import TripRequest, TripPlan, DayPlan, Attraction, Meal, WeatherInfo, Location, Hotel
 from ..config import get_settings
 
@@ -162,7 +162,11 @@ class TripAgentPool:
 
         try:
             settings = get_settings()
-            self.llm = get_llm()
+            # 各Agent使用独立LLM客户端，避免并行节点共享客户端导致请求超时。
+            self.attraction_llm = create_llm()
+            self.weather_llm = create_llm()
+            self.hotel_llm = create_llm()
+            self.llm = create_llm(timeout=180)
 
             # 创建共享的MCP工具(只创建一次)
             print("  - 创建共享MCP工具...")
@@ -173,13 +177,13 @@ class TripAgentPool:
                 env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
                 auto_expand=True
             )
-            # self.amap_tool.expandable=True
+            self.amap_tool.expandable = True
 
             # 创建景点搜索Agent
             print("  - 创建景点搜索Agent...")
             self.attraction_agent = SimpleAgent(
                 name="景点搜索专家",
-                llm=self.llm,
+                llm=self.attraction_llm,
                 system_prompt=ATTRACTION_AGENT_PROMPT
             )
             self.attraction_agent.add_tool(self.amap_tool)
@@ -188,7 +192,7 @@ class TripAgentPool:
             print("  - 创建天气查询Agent...")
             self.weather_agent = SimpleAgent(
                 name="天气查询专家",
-                llm=self.llm,
+                llm=self.weather_llm,
                 system_prompt=WEATHER_AGENT_PROMPT
             )
             self.weather_agent.add_tool(self.amap_tool)
@@ -197,7 +201,7 @@ class TripAgentPool:
             print("  - 创建酒店推荐Agent...")
             self.hotel_agent = SimpleAgent(
                 name="酒店推荐专家",
-                llm=self.llm,
+                llm=self.hotel_llm,
                 system_prompt=HOTEL_AGENT_PROMPT
             )
             self.hotel_agent.add_tool(self.amap_tool)

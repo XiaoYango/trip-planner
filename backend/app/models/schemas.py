@@ -170,6 +170,11 @@ class TripWorkflowResponse(BaseModel):
     message: str = Field(default="", description="消息")
     data: Optional[TripPlan] = Field(default=None, description="草案或最终旅行计划")
     review: Optional[dict[str, Any]] = Field(default=None, description="人工审核信息")
+    errors: List[str] = Field(
+        default_factory=list,
+        description="经过脱敏处理的工作流错误详情",
+    )
+    attempts: int = Field(default=0, ge=0, description="Planner已尝试次数")
 
 
 class TripReviewRequest(BaseModel):
